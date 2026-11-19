@@ -1,21 +1,23 @@
 # LoTW ADIF Downloader
 # Author: George Perkins (N5UI)
 # Date: 2026-11-19
-# Version: 1.2.0
+# Version: 1.3.0
 #
 # Usage: py download_lotw.py [--date YYYY-MM-DD]
 #
-# No options          Download all available QSOs to Downloads/LoTW-Full.adi.
-# --date YYYY-MM-DD   Download QSOs made on one UTC date to
-#                     Downloads/LoTW-YYYY-MM-DD.adi.
+# No options          Download all available dates for your callsign selection.
+# --date YYYY-MM-DD   Download QSOs made on one UTC date.
 # -h, --help          Show command-line help and exit.
 #
 # Examples:
 #   py download_lotw.py
 #   py download_lotw.py --date 2026-11-19
 #
-# The script prompts for your LoTW username and password. The ADIF export
-# includes confirmed and unconfirmed QSOs.
+# The script prompts for your LoTW login and your own station callsign.
+# Enter ALL for every callsign on the account. Reports include confirmed and
+# unconfirmed QSOs and are saved in Downloads. Example filenames:
+#   LoTW-Full.adi or LoTW-2026-11-19.adi for ALL
+#   LoTW-N5UI-Full.adi or LoTW-N5UI-2026-11-19.adi for N5UI
 
 """Download the complete ARRL LoTW QSO history as a raw ADIF file."""
 
@@ -59,7 +61,7 @@ def downloads_folder():
     return Path.home() / "Downloads"
 
 
-def download_report(username, password, qso_date=None):
+def download_report(username, password, qso_date=None, own_call=None):
     parameters = {
         "login": username,
         "password": password,
@@ -73,6 +75,9 @@ def download_report(username, password, qso_date=None):
     if qso_date:
         parameters.update(qso_startdate=qso_date, qso_enddate=qso_date)
 
+    if own_call:
+        parameters["qso_owncall"] = own_call
+
     query = urlencode(parameters)
     finished = Event()
     started = monotonic()
@@ -80,7 +85,7 @@ def download_report(username, password, qso_date=None):
     headers_received = False
 
     def show_progress():
-        while not finished.wait(5):
+        while not finished.wait(30):
             elapsed = int(monotonic() - started)
             if headers_received:
                 print(f"  Received {received:,} bytes ({elapsed}s elapsed)...", flush=True)
@@ -160,7 +165,15 @@ def main():
         if not username or not password:
             raise ValueError("Enter both your LoTW username and password.")
 
-        filename = f"LoTW-{qso_date}.adi" if qso_date else "LoTW-Full.adi"
+        selection = input("Your station callsign (or ALL): ").strip().upper()
+        if not re.fullmatch(r"[A-Z0-9]+(?:/[A-Z0-9]+)*", selection):
+            raise ValueError("Enter a station callsign such as N5UI or enter ALL.")
+        own_call = None if selection == "ALL" else selection
+
+        filename_prefix = "LoTW"
+        if own_call:
+            filename_prefix += "-" + own_call.replace("/", "_")
+        filename = f"{filename_prefix}-{qso_date or 'Full'}.adi"
         destination = downloads_folder() / filename
         if destination.exists():
             answer = input(f"Replace {destination}? [y/N] ").strip().lower()
@@ -169,8 +182,9 @@ def main():
                 return 1
 
         scope = f"QSOs on {qso_date} UTC" if qso_date else "your full LoTW history"
-        print(f"Requesting {scope} from LoTW...", flush=True)
-        report, count = download_report(username, password, qso_date)
+        station = own_call or "all station callsigns"
+        print(f"Requesting {scope} for {station} from LoTW...", flush=True)
+        report, count = download_report(username, password, qso_date, own_call)
         save_report(report, destination)
         print(f"Saved {count:,} QSOs ({len(report):,} bytes) to {destination}")
         if count == 0:
